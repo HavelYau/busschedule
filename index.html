@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>邨巴 Bus ETA 1.5</title>
+    
+    <style>
+        :root {
+            --font-size: 15px;
+        }
+
+        /* Android Tablet breakpoint approximation */
+        @media (min-width: 600px) and (max-width: 768px) {
+            :root {
+                --font-size: 40px;
+            }
+        }
+
+        /* iPad and larger screen breakpoints */
+        @media (min-width: 769px) {
+            :root {
+                --font-size: 50px;
+            }
+        }
+
+        body {
+            background-color: #121212;
+            color: #ffffff;
+            font-family: sans-serif;
+            margin: 0;
+            padding: 10px;
+            font-size: var(--font-size);
+        }
+
+        .header {
+            margin-bottom: 10px;
+            font-weight: bold;
+            font-size: var(--font-size);
+        }
+
+        table {
+            width: 100%;
+            table-layout: fixed;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding: 0.5em 0.2em;
+            border-bottom: 1px solid #333;
+            font-size: var(--font-size);
+        }
+
+        .route-badge {
+            background-color: #1565C0;
+            color: white;
+            padding: 0.2em 0.5em;
+            border-radius: 0.2em;
+            display: inline-block;
+        }
+
+        .eta-badge {
+            display: inline-block;
+            padding: 0.2em 0.5em;
+            margin-right: 0.3em;
+            border-radius: 0.2em;
+            color: white;
+            text-align: center;
+            min-width: 1.5em;
+        }
+
+        .eta-red { background-color: #e53935; }
+        .eta-orange { background-color: #fb8c00; }
+        .eta-green { background-color: #43a047; }
+    </style>
+</head>
+<body>
+    <div class="header" id="header-title">出門交通</div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width:20%">開往</th>
+                <th style="width:20%">路線</th>
+                <th style="width:28%">車站</th>
+                <th style="width:32%">距離到站(分鐘)</th>
+            </tr>
+        </thead>
+        <tbody id="bus-data">
+            <!-- Data appended dynamically -->
+        </tbody>
+    </table>
+
+    <script>
+        let publicHolidays = [];
+
+        const instructionsList = `
+屋苑 邨巴 灣仔 兆麟苑 SL to WC schedule bus timetable.jpeg
+CTB 962X 銅鑼灣 老鼠洲兒童遊樂場 https://rt.data.gov.hk/v2/transport/citybus/eta/ctb/001922/962X
+CTB B3 深圳灣巳岸 老鼠洲兒童遊樂場 https://rt.data.gov.hk/v2/transport/citybus/eta/ctb/001922/B3
+KMB 60X 高鐵西九龍站 兆麟苑 https://data.etabus.gov.hk/v1/transport/kmb/eta/07B714029E91FD81/60X/1
+KMB 61X 九龍城碼頭巴士總站 兆麟苑 https://data.etabus.gov.hk/v1/transport/kmb/eta/07B714029E91FD81/61X/1
+KMB 60M 荃灣 兆麟苑 https://data.etabus.gov.hk/v1/transport/kmb/eta/07B714029E91FD81/60M/1
+KMB 62X 鯉魚門 兆麟苑 https://data.etabus.gov.hk/v1/transport/kmb/eta/07B714029E91FD81/62X/1
+KMB 261 祥和總站 三聖總站 https://data.etabus.gov.hk/v1/transport/kmb/route-stop/261/outbound/1
+KMB 61M 荔景北 三聖總站 https://data.etabus.gov.hk/v1/transport/kmb/eta/A2586669ADE21A28/61M/1
+KMB 61M 屯門海榮路 三聖總站 https://data.etabus.gov.hk/v1/transport/kmb/eta/9D88EE061FF5E1D0/61M/1
+KMB A33X 機場地面運輸中心 兆麟苑 https://data.etabus.gov.hk/v1/transport/kmb/eta/1D44677AEFBA8773/A33X/1
+KMB E33 機場地面運輸中心 兆麟苑 https://data.etabus.gov.hk/v1/transport/kmb/eta/1D44677AEFBA8773/E33/1
+KMB 263 沙田站 兆麟苑 https://data.etabus.gov.hk/v1/transport/kmb/eta/07B714029E91FD81/263/1
+        `.trim().split('\n').map(line => line.trim()).filter(line => line);
+
+        async function fetchHolidays() {
+            const currentYear = new Date().getFullYear();
+            
+            // Hardcoded 2026 holidays as a fallback to avoid CORS issues
+            const defaultHolidays2026 = [
+                "20260101", "20260217", "20260218", "20260219", "20260403", 
+                "20260404", "20260406", "20260501", "20260524", "20260525", 
+                "20260619", "20260701", "20260926", "20261001", "20261026", 
+                "20261225", "20261226"
+            ];
+            
+            try {
+                const res = await fetch('https://vcalendar.1823.gov.hk/api/eng.json');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.vcalendar && data.vcalendar[0] && data.vcalendar[0].vevent) {
+                        publicHolidays = data.vcalendar[0].vevent.map(ev => ev.dtstart[0]);
+                        return;
+                    }
+                }
+                throw new Error("Invalid response format");
+            } catch (e) {
+                // Fallback to hardcoded list if API fails
+                if (currentYear === 2026) {
+                     publicHolidays = defaultHolidays2026;
+                }
+            }
+        }
+
+        function getScheduleETAs(currentDateObj, isHoliday) {
+            const day = currentDateObj.getDay(); // 0 is Sunday
+            
+            // If Sunday or Holiday, explicitly return 0 to trigger the red zero badge
+            if (isHoliday || day === 0) {
+                return [0];
+            }
+
+            let times = [];
+            
+            if (day >= 1 && day <= 5) { // Mon-Fri
+                times = ["07:10", "07:30", "07:40", "07:50", "08:00", "08:10", "08:20", "08:35"];
+            } else if (day === 6) { // Saturday
+                times = ["07:50"];
+            }
+
+            const currentMins = currentDateObj.getHours() * 60 + currentDateObj.getMinutes();
+            const etas = [];
+            
+            for (const timeStr of times) {
+                const [h, m] = timeStr.split(':').map(Number);
+                const schedMins = h * 60 + m;
+                const diff = schedMins - currentMins;
+                if (diff >= 0) etas.push(diff);
+            }
+            return etas.slice(0, 3);
+        }
+
+        function updateClock() {
+            const now = new Date();
+            const hkTimeStr = now.toLocaleString("en-US", { timeZone: "Asia/Hong_Kong" });
+            const hkTime = new Date(hkTimeStr);
+            
+            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const d = String(hkTime.getDate()).padStart(2, '0');
+            const m = months[hkTime.getMonth()];
+            const y = hkTime.getFullYear();
+            const hh = String(hkTime.getHours()).padStart(2, '0');
+            const mm = String(hkTime.getMinutes()).padStart(2, '0');
+            const ss = String(hkTime.getSeconds()).padStart(2, '0');
+            
+            document.getElementById('header-title').textContent = `出門交通 ${d}-${m}-${y} ${hh}:${mm}:${ss}`;
+            return hkTime;
+        }
+
+        async function updateETAs() {
+            const hkTime = updateClock();
+            
+            const yyyymmdd = hkTime.getFullYear() + 
+                             String(hkTime.getMonth() + 1).padStart(2, '0') + 
+                             String(hkTime.getDate()).padStart(2, '0');
+            const isHoliday = publicHolidays.includes(yyyymmdd);
+            
+            const newTbody = document.createElement('tbody');
+            newTbody.id = 'bus-data';
+
+            for (const line of instructionsList) {
+                const parts = line.split(' ');
+                if (parts.length < 5) continue;
+                
+                const busCoId = parts[0];
+                const route = parts[1];
+                const direction = parts[2];
+                const stopName = parts[3];
+                const targetSrc = parts.slice(4).join(' ');
+                
+                let etas = [];
+
+                if (!targetSrc.startsWith('https://')) {
+                    etas = getScheduleETAs(hkTime, isHoliday);
+                } else {
+                    try {
+                        const response = await fetch(targetSrc);
+                        if (!response.ok) throw new Error("API Fetch Error");
+                        const data = await response.json();
+                        
+                        if (data.data && Array.isArray(data.data.eta)) {
+                            etas = data.data.eta
+                                .map(e => e.diff)
+                                .filter(diff => diff !== null && diff >= 0);
+                        } else if (data.data && Array.isArray(data.data)) {
+                            const nowMs = Date.now();
+                            etas = data.data
+                                .filter(d => d.eta !== null)
+                                .map(d => {
+                                    const etaMs = new Date(d.eta).getTime();
+                                    return Math.floor((etaMs - nowMs) / 60000);
+                                })
+                                .filter(diff => !isNaN(diff) && diff >= 0);
+                        } else if (data.data && data.data.eta !== undefined) {
+                            const nowMs = Date.now();
+                             if(data.data.eta !== null) {
+                                 const etaMs = new Date(data.data.eta).getTime();
+                                 const diff = Math.floor((etaMs - nowMs) / 60000);
+                                 if(!isNaN(diff) && diff >= 0) etas.push(diff)
+                             }
+                        }
+
+                        etas.sort((a, b) => a - b);
+                        etas = [...new Set(etas)].slice(0, 3);
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                if (etas.length === 0) continue; 
+
+                const tr = document.createElement('tr');
+                
+                const tdDir = document.createElement('td');
+                tdDir.textContent = direction;
+                
+                const tdRoute = document.createElement('td');
+                const spanRoute = document.createElement('span');
+                spanRoute.className = 'route-badge';
+                spanRoute.textContent = route;
+                tdRoute.appendChild(spanRoute);
+                
+                const tdStop = document.createElement('td');
+                tdStop.textContent = stopName;
+                
+                const tdEta = document.createElement('td');
+                etas.forEach(eta => {
+                    const spanEta = document.createElement('span');
+                    let colorClass = 'eta-green';
+                    if (eta < 9) colorClass = 'eta-red';
+                    else if (eta >= 9 && eta <= 15) colorClass = 'eta-orange';
+                    
+                    spanEta.className = `eta-badge ${colorClass}`;
+                    spanEta.textContent = eta;
+                    tdEta.appendChild(spanEta);
+                });
+                
+                tr.appendChild(tdDir);
+                tr.appendChild(tdRoute);
+                tr.appendChild(tdStop);
+                tr.appendChild(tdEta);
+                newTbody.appendChild(tr);
+            }
+
+            const oldTbody = document.getElementById('bus-data');
+            oldTbody.parentNode.replaceChild(newTbody, oldTbody);
+        }
+
+        async function init() {
+            await fetchHolidays();
+            updateClock();
+            await updateETAs();
+            
+            setInterval(updateClock, 1000);
+            setInterval(updateETAs, 10000);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
